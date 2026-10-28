@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="120" y2="120"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#7dd3fc"/></linearGradient>
+    <radialGradient id="o" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#0ea5e9" stop-opacity=".55"/><stop offset="1" stop-color="#0ea5e9" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="120" height="120" rx="26" fill="#061420"/>
+  <circle cx="60" cy="52" r="56" fill="url(#o)"/>
+  <g stroke="url(#g)" stroke-width="2.4" stroke-linecap="round"><line x1="60" y1="12" x2="60" y2="19" transform="rotate(-72 60 52)"/><line x1="60" y1="12" x2="60" y2="19" transform="rotate(-48 60 52)"/><line x1="60" y1="12" x2="60" y2="19" transform="rotate(-24 60 52)"/><line x1="60" y1="12" x2="60" y2="19" transform="rotate(0 60 52)"/><line x1="60" y1="12" x2="60" y2="19" transform="rotate(24 60 52)"/><line x1="60" y1="12" x2="60" y2="19" transform="rotate(48 60 52)"/><line x1="60" y1="12" x2="60" y2="19" transform="rotate(72 60 52)"/></g>
+  <g fill="rgba(255,255,255,.04)" stroke="url(#g)" stroke-width="3" stroke-linejoin="round">
+    <path d="M60 96C48 87 30 85 15 89L15 55C30 51 48 53 60 62Z"/><path d="M60 96C72 87 90 85 105 89L105 55C90 51 72 53 60 62Z"/>
+  </g>
+  <g stroke="url(#g)" stroke-width="2.6" stroke-linecap="round" opacity=".8"><line x1="25" y1="65" x2="48" y2="69"/><line x1="25" y1="74" x2="48" y2="78"/></g>
+  <path d="M71 71L78 78L92 64" fill="none" stroke="url(#g)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M60 28C61.5 36 64 38.5 72 40C64 41.5 61.5 44 60 52C58.5 44 56 41.5 48 40C56 38.5 58.5 36 60 28Z" fill="url(#g)"/>
+</svg>
