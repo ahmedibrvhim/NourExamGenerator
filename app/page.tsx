@@ -258,7 +258,7 @@ export default function Home() {
   const readyKey = chosen.map((f) => { const r = rangeOf(f, dRanges); return `${f.id}:${f.pages ? f.pages.filter((t) => !isBlankPage(t)).length : 0}:${r.from}-${r.to}`; }).join("|");
   const detected = useMemo(() => {
     if (!needRange || !analysisReady || !chosen.length) return null;
-    return detectFromRanges(chosen.map((f) => { const r = rangeOf(f, dRanges); return { pages: f.pages!, from: r.from, to: r.to }; }));
+    return detectFromRanges(chosen.map((f) => { const r = rangeOf(f, dRanges); return { pages: f.pages!, from: r.from, to: r.to }; }), subject?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readyKey, subject?.id, analysisReady]);
   const stage: Stage | null = detected?.stage ?? null;
@@ -785,7 +785,7 @@ export default function Home() {
                       <div className="smart-row">
                         <span>الملف</span>
                         <span className="tag">{gradeName(stage, level) ?? (stage ? STAGE_LABEL[stage] : "الصف غير معروف")}</span>
-                        <span className="tag">{BRANCH_LABEL[branch]}</span>
+                        {subject.id === "science" && <span className="tag">{BRANCH_LABEL[branch]}</span>}
                         <span className="tag">{detected.pages} صفحة · {detected.facts} جملة معلومات</span>
                       </div>
                       <div className="smart-row">

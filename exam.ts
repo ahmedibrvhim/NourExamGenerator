@@ -245,6 +245,30 @@ export function dealSets(pool: Q[], versions: number): Q[][] {
 }
 
 // ---------- 3) PDF file ----------
+// MATH: an expression such as "٣ + ٥ = ٨" or "٢س + ٣ = ١١" must keep its left-to-right order inside an Arabic line.
+// Consecutive "math-looking" words are wrapped in an LTR <bdi>; everything is HTML-escaped here.
+const MATHY = /^[0-9٠-٩a-zA-Z²³⁴√π°%.,٫+\-−×÷=<>≤≥≠^\/():]+$/;
+const MATH_VAR = /^[٠-٩0-9.,٫]*[سصعمنلك][٠-٩0-9²³]*$/;
+const MATH_OPS = /[+\-−×÷=<>≤≥≠^\/√]/;
+export function mathHtml(t: string): string {
+  let out = "", run: string[] = [];
+  const flush = () => {
+    if (!run.length) return;
+    let tail = "";
+    if (/^\s+$/.test(run[run.length - 1])) tail = run.pop() as string; // a trailing space stays outside the wrapper
+    const txt = run.join("");
+    out += (MATH_OPS.test(txt) || run.length > 2 ? `<bdi dir="ltr">${esc(txt)}</bdi>` : esc(txt)) + tail;
+    run = [];
+  };
+  for (const p of t.split(/(\s+)/)) {
+    if (!p) continue;
+    if (/^\s+$/.test(p)) { if (run.length) run.push(p); else out += p; continue; }
+    if (MATHY.test(p) || MATH_VAR.test(p)) run.push(p);
+    else { flush(); out += esc(p); }
+  }
+  flush();
+  return out;
+}
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
 const AR = ["أ", "ب", "ج", "د", "هـ", "و"], EN = ["A", "B", "C", "D", "E", "F"];
 
@@ -280,6 +304,8 @@ export function examHtml(e: Exam, v: string, key = false): string {
   // Layout rule: as compact as possible. MCQ choices share one row, true/false sits on the question's own row,
   // every written answer gets ONE line (or an inline blank), and the sections are tight.
   const blanks = (t: string) => esc(t).replace(/_{3,}/g, '<span class="bl"></span>');
+  const isMath = e.subject === "math";
+  const T = (t: string) => (isMath ? mathHtml(t) : esc(t));
   const renderQ = (q: Q) => {
     n++;
     const ar = /[؀-ۿ]/.test(q.text);
@@ -290,12 +316,14 @@ export function examHtml(e: Exam, v: string, key = false): string {
       extra = `<ol class="c">${q.choices.map((c, k) => {
         const ok = key && c === q.answer;
         if (ok) summary.push(`<span><b>${n}</b><em>${L[k] ?? k + 1}</em></span>`);
-        return `<li${ok ? ' class="ok"' : ""}><span class="l">${L[k] ?? k + 1}</span><span class="t">${esc(c)}</span></li>`;
+        return `<li${ok ? ' class="ok"' : ""}><span class="l">${L[k] ?? k + 1}</span><span class="t">${T(c)}</span></li>`;
       }).join("")}</ol>`;
     } else if (q.kind === "tf") {
       if (key && tfAns) summary.push(`<span><b>${n}</b><em>${tfAns}</em></span>`);
       const yes = ar ? "صح" : "True", no = ar ? "خطأ" : "False";
       inline = `<span class="tf"><span class="opt${key && q.answer === "true" ? " on" : ""}"><span class="bx">${key && q.answer === "true" ? "✓" : ""}</span>${yes}</span><span class="opt${key && q.answer === "false" ? " on" : ""}"><span class="bx">${key && q.answer === "false" ? "✓" : ""}</span>${no}</span></span>`;
+    } else if (q.kind === "solve") {
+      extra = key && q.answer ? `<div class="model pre"><b>الحل:</b>\n${T(q.answer)}</div>` : `<div class="ln"></div><div class="ln"></div><div class="ln"></div>`;
     } else if (q.kind === "problem") {
       extra = key && q.answer ? `<div class="model pre"><b>الحل:</b>\n${esc(q.answer)}</div>` : `<div class="ln"></div><div class="ln"></div>`;
     } else if (q.kind === "balance" || q.kind === "write") {
@@ -312,7 +340,7 @@ export function examHtml(e: Exam, v: string, key = false): string {
       extra = key && q.answer ? `<div class="model${q.kind === "compare" ? " pre" : ""}"><b>${label}:</b> ${q.kind === "compare" ? "\n" : ""}${esc(q.answer)}</div>` : `<div class="ln"></div>`;
     }
     const why = key && q.explanation && ["mcq", "tf"].includes(q.kind) ? `<p class="why"><b>التفسير:</b> ${esc(q.explanation)}</p>` : "";
-    let qText = q.kind === "fill" ? blanks(q.text) : esc(q.text), eqLine = "";
+    let qText = q.kind === "fill" ? blanks(q.text) : T(q.text), eqLine = "";
     if (q.kind === "balance") {
       const m = q.text.match(/^([\s\S]*?[:：])\s*([^:：]+)$/);
       if (m) { qText = esc(m[1]); eqLine = `<div class="eqline" dir="ltr">${esc(m[2].trim())}</div>`; }

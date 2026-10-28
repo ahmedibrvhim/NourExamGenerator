@@ -20,6 +20,7 @@ export type Signals = {
   equations: string[];
   problems: string[];     // "احسب / أوجد ..." with numbers and units
   laws: string[];         // formulas such as "V = I × R"
+  math: string[];         // math exercises / examples / worked lines (used by the math subject)
 };
 
 // A heading is not a sentence. Lines of one paragraph are joined, then cut at . ? ! ؟
@@ -59,10 +60,28 @@ const HASNUM = /[0-9٠-٩]/;
 // a law written as a formula on its own line: "V = I × R", "شدة التيار = كمية الكهربية ÷ الزمن"
 const isLaw = (l: string) => l.length >= 5 && l.length <= 90 && l.includes("=") && !/[→⟶⇌⇄]|->/.test(l) && (/[×÷*\/]/.test(l) || /^\s*[A-Za-z]{1,3}\s*=/.test(l)) && !/^[\d\s.=+\-]+$/.test(l);
 
+// MATH: exercises and examples are short lines such as "احسب: ٣٤ + ٥٦" or "أوجد قيمة س: ٢س + ٣ = ١١", so they are read line by line
+// (the sentence splitter above drops anything shorter than 25 letters).
+const MATH_VERB = /(?:احسب|اوجد|جد|حل|بسط|اختصر|اكمل|ما ناتج|ما قيمه|ما مقدار|ما هو|ما هي|قارن|رتب|مثل|حلل|اثبت|كم|اي مما ياتي|اختر)/;
+const MATH_OP = /[=+\-−×÷*\/^√%<>≤≥≠²³]/;
+export function mathItems(text: string): string[] {
+  const out: string[] = [], seen = new Set<string>();
+  for (const raw of text.split("\n")) {
+    const l = raw.replace(/\s+/g, " ").trim();
+    if (l.length < 6 || l.length > 260 || !HASNUM.test(l)) continue;
+    const n = norm(l);
+    if (!(MATH_VERB.test(n) || (MATH_OP.test(l) && (l.match(/[0-9٠-٩]/g) ?? []).length >= 2))) continue;
+    const key = n.replace(/\s+/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key); out.push(l);
+  }
+  return out;
+}
+
 const clip = (s: string, n = 190) => (s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
 
 export function extractSignals(text: string): Signals {
-  const sig: Signals = { facts: 0, define: [], term: [], compare: [], reason: [], equations: [], problems: [], laws: [] };
+  const sig: Signals = { facts: 0, define: [], term: [], compare: [], reason: [], equations: [], problems: [], laws: [], math: [] };
   const seen = new Set<string>();
   for (const s of splitSentences(text)) {
     const n = norm(s);
@@ -81,6 +100,7 @@ export function extractSignals(text: string): Signals {
   const laws = new Set<string>();
   for (const l of text.split("\n")) if (isLaw(l)) laws.add(clip(l.replace(/\s+/g, " ").trim(), 120));
   sig.laws = [...laws];
+  sig.math = mathItems(text);
   const eq = new Set<string>();
   for (const m of text.matchAll(EQ)) {
     const e = m[0].replace(/\s+/g, " ").trim();
@@ -93,10 +113,21 @@ export function extractSignals(text: string): Signals {
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 // Which question types do these pages support, and how many of each would a balanced copy of the exam have?
-export function evidenceFor(sig: Signals, pages: number): Avail {
+export function evidenceFor(sig: Signals, pages: number, subject?: string): Avail {
   const S = sig.facts, D = sig.define.length, T = sig.term.length, C = sig.compare.length, R = sig.reason.length, E = sig.equations.length, P = sig.problems.length, L = sig.laws.length;
   const tooShort = "الصفحات المحددة قصيرة لا تكفي لأسئلة";
-  const raw: Record<Exclude<Kind, "essay">, { n: number; ok: boolean; why: string; w: number; cap: number }> = {
+  if (subject === "math") {
+    // math pages are mostly numbers and short lines, so the evidence is the exercises/examples + the explanation sentences
+    const M = sig.math.length + L, mat = M + S;
+    const okM = mat >= 4, whyM = "الصفحات المحددة لا تحتوي مادة كافية (تمارين / أمثلة / قواعد) لهذا النوع";
+    const totalM = clamp(Math.round(Math.min(pages * 1.6, mat * 0.7)), 4, 30);
+    const mcqN = clamp(Math.round(totalM * 0.4), 1, 12), solveN = clamp(totalM - mcqN, 1, 20);
+    return {
+      mcq: { ok: okM, n: mat, suggest: okM ? mcqN : 0, why: okM ? undefined : whyM },
+      solve: { ok: okM, n: mat, suggest: okM ? solveN : 0, why: okM ? undefined : whyM },
+    };
+  }
+  const raw: Record<Exclude<Kind, "essay" | "solve">, { n: number; ok: boolean; why: string; w: number; cap: number }> = {
     mcq:     { n: S,     ok: S >= 6,     why: tooShort,                                                              w: 4,   cap: S },
     tf:      { n: S,     ok: S >= 6,     why: tooShort,                                                              w: 3,   cap: S },
     fill:    { n: S,     ok: S >= 6,     why: tooShort,                                                              w: 3,   cap: S },
@@ -122,7 +153,7 @@ export function evidenceFor(sig: Signals, pages: number): Avail {
 }
 
 // Key sentences for the AI, only for the types it is asked to write in this batch.
-export function hintsFor(text: string, kinds: string[]): string {
+export function hintsFor(text: string, kinds: string[], subject?: string): string {
   const sig = extractSignals(text);
   const parts: string[] = [];
   const list = (title: string, arr: string[], max: number) => { if (arr.length) parts.push(`${title}\n${arr.slice(0, max).map((x) => `- ${x}`).join("\n")}`); };
@@ -131,5 +162,6 @@ export function hintsFor(text: string, kinds: string[]): string {
   if (kinds.includes("reason")) list("CAUSE-AND-EFFECT statements in the text (best material for reason questions):", sig.reason, 6);
   if (kinds.includes("balance") || kinds.includes("write")) list("CHEMICAL EQUATIONS in the text:", sig.equations, 6);
   if (kinds.includes("problem")) list("LAWS (formulas) and CALCULATION EXAMPLES in the text (best material for problem questions; use these laws and similar numbers):", [...sig.laws, ...sig.problems], 8);
+  if (subject === "math") list("MATH EXERCISES, EXAMPLES and RULES in the text (copy their style, topics and difficulty; use NEW numbers):", [...sig.laws, ...sig.math], 10);
   return parts.length ? `KEY SENTENCES found in the text (build the matching question types from these first; they are real statements of the book):\n${parts.join("\n")}\n` : "";
 }

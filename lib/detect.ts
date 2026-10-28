@@ -18,7 +18,7 @@ const levelOf = (s: string) => { const i = ORD.findIndex(([r]) => r.test(s)); re
 export type Source = { pages: string[]; from: number; to: number };
 
 // One entry per chosen file: its pages and the page range the teacher typed (1-based, inclusive).
-export function detectFromRanges(sources: Source[]): Detected {
+export function detectFromRanges(sources: Source[], subject?: string): Detected {
   const slice = sources.flatMap((s) => s.pages.slice(Math.max(0, s.from - 1), Math.min(s.pages.length, s.to)));
   const head = norm(sources.map((s) => s.pages.slice(0, 8).join("\n")).join("\n")).replace(/\s+/g, " ").slice(0, 12000); // cover + first pages carry the grade
   const body = norm(slice.join("\n"));
@@ -47,10 +47,10 @@ export function detectFromRanges(sources: Source[]): Detected {
     geology: count(/(?:صخور|معدن|زلزال|بركان|الارض|الغلاف الصخري|التجويه|الحفريات)/g),
   };
   const top = (Object.entries(sc) as Array<[Branch, number]>).sort((a, b) => b[1] - a[1]);
-  const branch: Branch = top[0][1] >= 6 && top[0][1] >= (top[1][1] || 0) * 1.4 ? top[0][0] : "general";
+  const branch: Branch = subject === "math" ? "general" : top[0][1] >= 6 && top[0][1] >= (top[1][1] || 0) * 1.4 ? top[0][0] : "general";
 
   const text = slice.join("\n");
   const sig = extractSignals(text);
-  const avail = evidenceFor(sig, slice.length);
+  const avail = evidenceFor(sig, slice.length, subject);
   return { stage, level, grade, branch, avail, pages: slice.length, facts: sig.facts };
 }

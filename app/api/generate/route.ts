@@ -57,7 +57,7 @@ const SCHEMA = {
           type: { type: "STRING", enum: [...KINDS] },
           text: { type: "STRING", description: "The question. Must make sense on its own." },
           choices: { type: "ARRAY", items: { type: "STRING" }, description: "mcq: exactly 4 options, no letter labels. every other type: empty array." },
-          answer: { type: "STRING", description: "mcq: the exact text of the correct choice. tf: 'true' or 'false'. reason/define/compare/essay: a short model answer. term: the term only. fill: the missing word(s) in order, separated by ' - '. problem: the full worked solution. balance/write: the final balanced equation." },
+          answer: { type: "STRING", description: "mcq: the exact text of the correct choice. tf: 'true' or 'false'. reason/define/compare/essay: a short model answer. term: the term only. fill: the missing word(s) in order, separated by ' - '. problem/solve: the full worked solution ending with the final answer. balance/write: the final balanced equation." },
           explanation: { type: "STRING", description: "One sentence showing where the text supports the answer." },
         },
         required: ["type", "text", "choices", "answer", "explanation"],
@@ -115,7 +115,25 @@ const KIND_RULES: Record<string, string> = {
   balance: `- balance (وزن المعادلة): the text MUST be "زن المعادلة الآتية:" followed by ONE UNBALANCED chemical equation written with formulas, Unicode subscripts and an arrow, e.g. "زن المعادلة الآتية: H₂ + O₂ → H₂O". The given equation must really be unbalanced. answer = the same equation, correctly BALANCED (same atoms on both sides, smallest whole-number coefficients), e.g. "2H₂ + O₂ → 2H₂O". choices = []. Use only reactions that appear in the text or follow directly from it.`,
   write: `- write (كتابة المعادلة): the text names the reactants and products IN WORDS and asks for the balanced symbolic equation, e.g. "اكتب المعادلة الكيميائية الرمزية الموزونة لتفاعل غاز الهيدروجين مع غاز الأكسجين لتكوين بخار الماء." Do NOT put any formula or arrow in the question text. answer = the balanced symbolic equation only, with Unicode subscripts and an arrow. choices = []. Use only reactions that appear in the text or follow directly from it.`,
 };
+const MATH_STAGE: Record<Stage, string> = {
+  primary: "STAGE = primary school. Short sentences, small whole numbers, simple fractions/decimals only as the text shows them. Word problems use everyday situations (money, sweets, school, measurements).",
+  prep: "STAGE = preparatory (middle) school. Use the book's own methods: algebra, fractions, ratios, equations, geometry and statistics exactly as the text teaches them.",
+  secondary: "STAGE = secondary school. Questions may need multi-step algebra, functions, trigonometry, calculus or statistics as the text teaches them. Use precise mathematical notation.",
+};
+const MATH_RULES = `- MATH EXCEPTION TO GROUNDING: you MAY (and should) invent NEW numbers, values, names and situations, but ONLY for the topics, rules and question styles that appear in the text. Copy the style and difficulty of the book's examples and exercises. Never use a topic the text does not teach.
+- The student has NO book, figure or graph. Describe any shape in words with all its measures (e.g. "مستطيل طوله ٨ سم وعرضه ٥ سم"). Plain text only: write fractions as ٣/٤, powers as س² or س^٣, roots as √٢٥, multiplication as ×, division as ÷. Use the same digit style as the text (Arabic-Indic ٠-٩ if the text uses them, otherwise 0-9) and keep it the same inside one question.
+- ACCURACY IS EVERYTHING: calculate every answer twice. If you are not sure the answer is exactly right, do not write the question. Prefer clean numbers that give tidy results.
+- mcq (اختر): a complete math question with exactly 4 choices and exactly one correct. Wrong choices are the results of common student mistakes (wrong sign, forgot a step, wrong operation, wrong unit) and look like the right one (same form and type). No two choices may be equal in value. answer = the exact text of the correct choice.
+- solve (أجب عن الأسئلة): a question the student solves on paper. Start with a verb such as احسب / أوجد / حل / بسّط / اختصر / أوجد ناتج / جد. One short problem that asks for ONE final result (a word problem is allowed and may be 2-3 sentences). It must contain the given numbers. choices = []. answer = the worked solution, one step per line (the rule, the substitution, the result), ending with the final answer and its unit if any.`;
 function subjectRules(subject: string, stage: Stage | null, level: number | null, branch: Branch | null, types: string[]): string {
+  if (subject === "math") {
+    const m = ["SUBJECT = Mathematics (رياضيات). Questions must test mathematical skill, not memorising page layout."];
+    if (stage) m.push(MATH_STAGE[stage]);
+    if (stage && level) m.push(`GRADE = ${GRADE_ORD[level - 1]} ${STAGE_SHORT[stage]}. Match exactly the level of this grade's curriculum; do not use topics or difficulty from higher grades.`);
+    else m.push("The school stage is unknown: infer it from the vocabulary and difficulty of the text and write questions at that level.");
+    m.push(MATH_RULES);
+    return "\n\nSUBJECT RULES:\n" + m.join("\n");
+  }
   if (subject !== "science") return "";
   const parts = ["SUBJECT = Science (علوم). Questions must test scientific understanding, not memorising page layout."];
   if (stage) parts.push(STAGE_RULES[stage]);
@@ -128,7 +146,7 @@ function subjectRules(subject: string, stage: Stage | null, level: number | null
 
 // OCR output can contain control characters, private-use symbols and lines of pure noise ("|||", "~ _ .").
 // Strip them so Gemini only sees real text.
-function cleanText(t: string): string {
+function cleanText(t: string, math = false): string {
   return t
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uE000-\uF8FF\uFFFD\uFFF0-\uFFFF]/g, " ")
     .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
@@ -137,6 +155,7 @@ function cleanText(t: string): string {
     .filter((l) => {
       if (!l) return true;
       const letters = (l.match(/[\p{L}\p{N}]/gu) ?? []).length;
+      if (math) return letters >= 2 && letters / l.length >= 0.3; // math lines are full of symbols: "٣ + ٥ = ٨", "(س + ٢)² = ٩"
       return letters >= 3 && letters / l.length >= 0.5;
     })
     .join("\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -148,7 +167,7 @@ type Raw = { type?: string; text?: string; choices?: unknown; answer?: string; e
 const DANGLING = /(?:^|\s)(?:في|من|إلى|الى|على|عن|مع|و|أو|او|ثم|التي|الذي|الذين|هل|ما|ماذا|كيف|لماذا|and|or|of|the|to|in|is|are|that|which)\s*$/i;
 // Questions that point at a text / picture / table the student does not have cannot be solved -> dropped.
 const AB = "(?<![\\u0621-\\u064A\\u0671-\\u06D3])", AE = "(?![\\u0621-\\u064A\\u0671-\\u06D3])"; // Arabic word start / end (so "نصف" is not mistaken for "نص")
-const REFERS_OUTSIDE = new RegExp([
+const REFERS_PARTS = [
   `${AB}(?:في|من|بحسب|حسب|وفق|ب|ل)?\\s*(?:ال)?(?:نص|فقرة|درس|مقطع)${AE}`,
   `${AB}(?:ال)?(?:مذكور|مذكورة|مذكورات|مذكورين|وارد|واردة|موضح|موضحة|مبين|مبينة|مرفق|مرفقة)${AE}`,
   `${AB}(?:ال)?(?:شكل|جدول|صورة|رسم|مخطط|منحنى|خريطة)\\s*(?:ال)?(?:مقابل|سابق|اعلاه|أعلاه|ادناه|أدناه|التالي|الآتي|الاتي|بالأعلى|بالاسفل|بالأسفل)${AE}`,
@@ -156,20 +175,23 @@ const REFERS_OUTSIDE = new RegExp([
   `${AB}(?:الشكل|الجدول|الصورة|الرسم)\\s*\\(?\\d`,
   `${AB}(?:صفحة|ص)\\s*\\d+`,
   "according to|\\bthe (?:text|passage|author|figure|table|diagram)\\b|\\bin the (?:text|book|passage|figure)\\b|\\bshown (?:above|below)\\b",
-].join("|"), "i");
-function looksIncomplete(t: string, short = false): boolean {
-  if (REFERS_OUTSIDE.test(t)) return true;
+];
+const REFERS_OUTSIDE = new RegExp(REFERS_PARTS.join("|"), "i");
+// math: "ص" is a variable (س، ص), so the page-number rule "ص 12" is left out
+const REFERS_MATH = new RegExp(REFERS_PARTS.filter((x) => !x.includes("(?:صفحة|ص)")).join("|"), "i");
+function looksIncomplete(t: string, short = false, math = false): boolean {
+  if ((math ? REFERS_MATH : REFERS_OUTSIDE).test(t)) return true;
   const s = t.replace(/[\s؟?.:،,!]+$/u, "");
   if ((s.match(/[\p{L}\p{N}]/gu) ?? []).length < (short ? 6 : 12)) return true;
   if (s.split(/\s+/).length < (short ? 2 : 3)) return true;
   return DANGLING.test(s);
 }
 
-function cleanOne(r: Raw, allowed: string[]): Q | null {
+function cleanOne(r: Raw, allowed: string[], math = false): Q | null {
   const kind = r.type as Q["kind"];
   let text = (r.text ?? "").trim();
   if (!text || !allowed.includes(kind)) return null;
-  if (looksIncomplete(text, kind === "define")) return null; // cut-off or too short to stand alone: better no question than a broken one
+  if (looksIncomplete(text, kind === "define" || math, math)) return null; // cut-off or too short to stand alone: better no question than a broken one
   const explanation = (r.explanation ?? "").trim();
   const answer = (r.answer ?? "").trim();
   if (kind === "mcq") {
@@ -181,6 +203,10 @@ function cleanOne(r: Raw, allowed: string[]): Q | null {
     const a = answer.toLowerCase();
     if (a !== "true" && a !== "false") return null;
     return { kind, text, choices: [], answer: a, explanation };
+  }
+  if (kind === "solve") {
+    if (!/[0-9٠-٩]/.test(text) || !/[0-9٠-٩]/.test(answer)) return null; // a math question needs given numbers and a numeric final answer
+    return { kind, text, choices: [], answer, explanation };
   }
   if (kind === "reason") {
     if (answer.length < 8) return null;
@@ -270,7 +296,8 @@ export async function POST(req: Request) {
   let body: { context?: string; want?: Record<string, number>; avoid?: string[]; difficulty?: string; topic?: string; subject?: string; stage?: string; level?: number; branch?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ code: "bad_request", error: "طلب غير صالح" }, { status: 400 }); }
 
-  const context = cleanText(body.context ?? "").slice(0, 12000);
+  const isMath = body.subject === "math";
+  const context = cleanText(body.context ?? "", isMath).slice(0, 12000);
   // how many questions of each type to write in this batch (small batches finish well inside the time limit)
   const want: Record<string, number> = {};
   let n = 0;
@@ -283,13 +310,13 @@ export async function POST(req: Request) {
   const level = LEVELS[body.difficulty ?? "mixed"] ?? LEVELS.mixed;
   const topic = (body.topic ?? "").trim().slice(0, 200);
   const avoid = (Array.isArray(body.avoid) ? body.avoid : []).map((s) => String(s).replace(/\s+/g, " ").trim().slice(0, 110)).filter(Boolean).slice(-40);
-  const NAMES: Record<string, string> = { term: "term (write the scientific term)", define: "define (عرّف)", compare: "compare (قارن)", fill: "fill (complete the blank)", mcq: "mcq (multiple choice)", tf: "tf (true/false)", essay: "essay (theoretical question)", reason: "reason (علل)", problem: "problem (numeric science problem)", balance: "balance (balance a given chemical equation)", write: "write (write a balanced chemical equation from words)" };
+  const NAMES: Record<string, string> = { term: "term (write the scientific term)", define: "define (عرّف)", compare: "compare (قارن)", fill: "fill (complete the blank)", mcq: "mcq (multiple choice)", tf: "tf (true/false)", essay: "essay (theoretical question)", reason: "reason (علل)", problem: "problem (numeric science problem)", solve: "solve (math question the student answers with a worked solution)", balance: "balance (balance a given chemical equation)", write: "write (write a balanced chemical equation from words)" };
   const stage = (["primary", "prep", "secondary"] as const).find((x) => x === body.stage) ?? null;
   const gradeNo = Number.isInteger(body.level) && body.level! >= 1 && body.level! <= 6 ? body.level! : null;
   const branch = (Object.keys(BRANCH_LABEL) as Branch[]).find((x) => x === body.branch) ?? null;
   const rules = subjectRules(String(body.subject ?? ""), stage, gradeNo, branch, types);
 
-  const hints = hintsFor(context, types);
+  const hints = hintsFor(context, types, isMath ? "math" : undefined);
   const prompt = `${rules ? rules.trim() + "\n\n" : ""}${hints ? hints + "\n" : ""}Write exactly ${n} questions, with exactly this many of each type:
 ${types.map((k) => `- ${NAMES[k]}: ${want[k]}`).join("\n")}
 Difficulty: ${level}.
@@ -381,7 +408,7 @@ ${context}
                 for (const obj of ext.push(piece)) {
                   let raw: Raw;
                   try { raw = JSON.parse(obj); } catch { continue; }
-                  const q = cleanOne(raw, types);
+                  const q = cleanOne(raw, types, isMath);
                   if (q) { count++; send({ t: "q", q }); }
                 }
               }

@@ -2,9 +2,9 @@
 // their default counts, and the extra instructions the AI receives.
 // Science is fully configured. The other subjects use the general types for now (custom types come later).
 
-export type Kind = "mcq" | "tf" | "reason" | "essay" | "problem" | "balance" | "write" | "term" | "define" | "compare" | "fill";
+export type Kind = "mcq" | "tf" | "reason" | "essay" | "problem" | "balance" | "write" | "term" | "define" | "compare" | "fill" | "solve";
 // also the order of the sections on the exam sheet. "essay" and "problem" are no longer offered for science, but exams saved earlier still use them.
-export const ALL_KINDS: Kind[] = ["mcq", "tf", "reason", "balance", "write", "term", "define", "compare", "fill", "essay", "problem"];
+export const ALL_KINDS: Kind[] = ["mcq", "tf", "reason", "balance", "write", "term", "define", "compare", "fill", "essay", "problem", "solve"];
 export const zeroCounts = (): Record<Kind, number> => Object.fromEntries(ALL_KINDS.map((k) => [k, 0])) as Record<Kind, number>;
 export const zeroTexts = (): Record<Kind, string> => Object.fromEntries(ALL_KINDS.map((k) => [k, "0"])) as Record<Kind, string>;
 
@@ -59,7 +59,14 @@ export const SUBJECTS: Subject[] = [
   { id: "arabic", name: "العربي", icon: "📖", ready: false, tagline: "أنواع الأسئلة الخاصة بالعربي تُضاف قريبًا", kinds: GENERIC },
   { id: "social", name: "الدراسات", icon: "🌍", ready: false, tagline: "أنواع الأسئلة الخاصة بالدراسات تُضاف قريبًا", kinds: GENERIC },
   { id: "english", name: "الانجليزي", icon: "🔤", ready: false, tagline: "أنواع الأسئلة الخاصة بالإنجليزي تُضاف قريبًا", kinds: GENERIC },
-  { id: "math", name: "الرياضيات", icon: "➗", ready: false, tagline: "أنواع الأسئلة الخاصة بالرياضيات تُضاف قريبًا", kinds: GENERIC },
+  {
+    id: "math", name: "الرياضيات", icon: "➗", ready: true,
+    tagline: "اختر · أجب عن الأسئلة",
+    kinds: [
+      { id: "mcq", label: "اختر", hint: "", section: "اختر الإجابة الصحيحة من بين الإجابات المعطاة", grades: ALL },
+      { id: "solve", label: "أجب عن الأسئلة", hint: "", section: "أجب عن الأسئلة الآتية", grades: ALL },
+    ],
+  },
 ];
 
 export const getSubject = (id: string | null | undefined): Subject | undefined => SUBJECTS.find((s) => s.id === id);
@@ -72,7 +79,7 @@ export const SECTION_TITLE: Record<Kind, string> = (() => {
 })();
 export const KIND_LABEL: Record<Kind, string> = {
   mcq: "اختر", tf: "صح وخطأ", essay: "نظري", reason: "علّل", problem: "مسألة", balance: "وزن معادلة", write: "كتابة معادلة",
-  term: "اكتب المصطلح", define: "عرّف", compare: "قارن", fill: "أكمل",
+  term: "اكتب المصطلح", define: "عرّف", compare: "قارن", fill: "أكمل", solve: "أجب",
 };
 
 export const STAGE_LABEL: Record<Stage, string> = { primary: "المرحلة الابتدائية", prep: "المرحلة الإعدادية", secondary: "المرحلة الثانوية" };
@@ -104,6 +111,6 @@ export function kindStatus(k: KindDef, stage: Stage | null, level: number | null
 // The other subjects (general types only for now) keep their simple defaults.
 export function defaultCounts(subject: Subject): Record<Kind, number> {
   const out = zeroCounts();
-  if (subject.id !== "science") { out.mcq = 10; out.tf = 5; out.essay = 5; }
+  if (!subject.ready) { out.mcq = 10; out.tf = 5; out.essay = 5; }
   return out;
 }
