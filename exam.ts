@@ -294,8 +294,25 @@ function setSigns(t: string): string {
   return t.replace(/(^|[^A-Za-z])([A-EX-Z](?:[NU][A-EX-Z])+)(?![A-Za-z])/g, (all, pre: string, m: string) =>
     NOT_SETS.has(m) ? all : pre + [...m].map((c, i) => (i % 2 ? (c === "N" ? " ∩ " : " ∪ ") : c)).join(""));
 }
+// Fixes the spacing of math text before it is drawn: "10 %" -> "10%", "( 3 + 4 )" -> "(3 + 4)", "x ²" -> "x²", "√ 25" -> "√25",
+// "3 / 4" -> "3/4", "2+3=5" -> "2 + 3 = 5", "{5,6,7}" -> "{5, 6, 7}", "10 ؟" -> "10؟", and double spaces -> one space.
+const TID_ATOM = "0-9٠-٩a-zA-Zسصعمنلك";
+function tidyMath(t: string): string {
+  return t.split("\n").map((l) => l
+    .replace(new RegExp(`([${TID_ATOM})])[ \\t]+([%٪°‰])`, "g"), "$1$2")                       // 10 % -> 10%
+    .replace(/([(\[{])[ \t]+/g, "$1").replace(/[ \t]+([)\]}])/g, "$1")                         // ( 3 ) -> (3)
+    .replace(new RegExp(`([${TID_ATOM})%٪°‰])[ \\t]+(?=[.?؟!،,؛;](?:\\s|$))`, "g"), "$1")          // 10 ؟ -> 10؟
+    .replace(new RegExp(`([${TID_ATOM})])[ \\t]+([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)`, "g"), "$1$2")                  // x ² -> x²
+    .replace(/[ \t]*\^[ \t]*/g, "^")                                                            // x ^ 2 -> x^2
+    .replace(/([⁰¹²³⁴⁵⁶⁷⁸⁹]+)[ \t]+√/g, "$1√").replace(/√[ \t]+(?=[0-9٠-٩a-zA-Z(])/g, "√")      // √ 25 -> √25
+    .replace(new RegExp(`([${TID_ATOM})])[ \\t]*\\/[ \\t]*(?=[0-9٠-٩a-zA-Z(√])`, "g"), "$1/")        // 3 / 4 -> 3/4
+    .replace(new RegExp(`([${TID_ATOM})%])[ \\t]*([+×÷=≠≈≤≥<>])[ \\t]*(?=[${TID_ATOM}(√−\\-π])`, "g"), "$1 $2 ") // 2+3=5 -> 2 + 3 = 5
+    .replace(/\{[^{}]*\}/g, (g) => g.replace(/[ \t]*([,،])[ \t]*(?=\S)/g, "$1 "))                  // {5,6,7} -> {5, 6, 7}
+    .replace(/(\S)[ \t]{2,}(?=\S)/g, "$1 ")                                                     // double spaces
+  ).join("\n");
+}
 export function mathHtml(t: string): string {
-  t = setSigns(t.replace(BIDI_MARKS, ""));
+  t = setSigns(tidyMath(t.replace(BIDI_MARKS, "")));
   return t.split("\n").map(mathLine).join("\n");
 }
 // splits at spaces, but never inside brackets, so "(6 ÷ 2)/(10 ÷ 2)" or "{5, 6, 7}" stays ONE word
