@@ -121,9 +121,10 @@ export function evidenceFor(sig: Signals, pages: number, subject?: string): Avai
     const M = sig.math.length + L, mat = M + S;
     const okM = mat >= 4, whyM = "الصفحات المحددة لا تحتوي مادة كافية (تمارين / أمثلة / قواعد) لهذا النوع";
     const totalM = clamp(Math.round(Math.min(pages * 1.6, mat * 0.7)), 4, 30);
-    const mcqN = clamp(Math.round(totalM * 0.4), 1, 12), solveN = clamp(totalM - mcqN, 1, 20);
+    const mcqN = clamp(Math.round(totalM * 0.35), 1, 12), fillN = clamp(Math.round(totalM * 0.25), 1, 8), solveN = clamp(totalM - mcqN - fillN, 1, 20);
     return {
       mcq: { ok: okM, n: mat, suggest: okM ? mcqN : 0, why: okM ? undefined : whyM },
+      fill: { ok: okM, n: mat, suggest: okM ? fillN : 0, why: okM ? undefined : whyM },
       solve: { ok: okM, n: mat, suggest: okM ? solveN : 0, why: okM ? undefined : whyM },
     };
   }

@@ -61,9 +61,10 @@ export const SUBJECTS: Subject[] = [
   { id: "english", name: "الانجليزي", icon: "🔤", ready: false, tagline: "أنواع الأسئلة الخاصة بالإنجليزي تُضاف قريبًا", kinds: GENERIC },
   {
     id: "math", name: "الرياضيات", icon: "➗", ready: true,
-    tagline: "اختر · أجب عن الأسئلة",
+    tagline: "اختر · أكمل · أجب عن الأسئلة",
     kinds: [
       { id: "mcq", label: "اختر", hint: "", section: "اختر الإجابة الصحيحة من بين الإجابات المعطاة", grades: ALL },
+      { id: "fill", label: "أكمل", hint: "", section: "أكمل الفراغات الآتية بما يناسبها", grades: ALL },
       { id: "solve", label: "أجب عن الأسئلة", hint: "", section: "أجب عن الأسئلة الآتية", grades: ALL },
     ],
   },

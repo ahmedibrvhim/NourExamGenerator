@@ -498,13 +498,13 @@ export function examHtml(e: Exam, v: string, key = false): string {
       if (key && q.answer) extra = `<div class="model"><b>المصطلح:</b> ${esc(q.answer)}</div>`;
       else inline = `<span class="tl"></span>`;
     } else if (q.kind === "fill") {
-      extra = key && q.answer ? `<div class="model"><b>الإجابة:</b> ${esc(q.answer)}</div>` : "";
+      extra = key && q.answer ? `<div class="model"><b>الإجابة:</b> ${T(q.answer)}</div>` : "";
     } else {
       const label = q.kind === "reason" ? "التعليل" : q.kind === "define" ? "التعريف" : q.kind === "compare" ? "المقارنة" : "الإجابة النموذجية";
       extra = key && q.answer ? `<div class="model${q.kind === "compare" ? " pre" : ""}"><b>${label}:</b> ${q.kind === "compare" ? "\n" : ""}${esc(q.answer)}</div>` : `<div class="ln"></div>`;
     }
     const why = key && q.explanation && ["mcq", "tf"].includes(q.kind) ? `<p class="why"><b>التفسير:</b> ${isMath ? mathHtml(q.explanation) : esc(q.explanation)}</p>` : "";
-    let qText = q.kind === "fill" ? blanks(q.text) : T(q.text), eqLine = "";
+    let qText = q.kind === "fill" ? (isMath ? mathHtml(q.text).replace(/_{3,}/g, '<span class="bl"></span>') : blanks(q.text)) : T(q.text), eqLine = "";
     if (q.kind === "balance") {
       const m = q.text.match(/^([\s\S]*?[:：])\s*([^:：]+)$/);
       if (m) { qText = esc(m[1]); eqLine = `<div class="eqline" dir="ltr">${esc(m[2].trim())}</div>`; }
