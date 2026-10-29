@@ -276,24 +276,87 @@ export function dealSets(pool: Q[], versions: number): Q[][] {
 
 // ---------- 3) PDF file ----------
 // MATH: an expression such as "٣ + ٥ = ٨" or "٢س + ٣ = ١١" must keep its left-to-right order inside an Arabic line.
-// Consecutive "math-looking" words are wrapped in an LTR <bdi>; everything is HTML-escaped here.
-const MATHY = /^[0-9٠-٩a-zA-Z⁰¹²³⁴⁵⁶⁷⁸⁹√π°%.,٫+\-−×÷=<>≤≥≠^\/():]+$/;
+// Consecutive "math-looking" words are put in an LTR box (one box per word, laid out left-to-right with plain flex, so the order
+// is identical in the browser and in the PDF picture). Sentence punctuation (. , : ، ؛ ؟ !) that follows a math run stays OUTSIDE the box,
+// at the end of the sentence where it belongs. Everything is HTML-escaped here.
+const MATHY = /^[0-9٠-٩a-zA-Z⁰¹²³⁴⁵⁶⁷⁸⁹⁻√∛π°%٪‰.,٫+\-−–×÷·∙*=<>≤≥≠≈±^\/():|{}\[\]∪∩∈∉⊂⊄⊆⊃⊇∅∞∠∥⊥△→←↔⇒⇔′″Δ]+$/;
 const MATH_VAR = /^[٠-٩0-9.,٫]*[سصعمنلك][٠-٩0-9²³]*$/;
-const MATH_OPS = /[+\-−×÷=<>≤≥≠^\/√⁰¹²³⁴⁵⁶⁷⁸⁹]/;
+const MATH_OPS = /[+\-−–×÷·=<>≤≥≠≈±^\/√⁰¹²³⁴⁵⁶⁷⁸⁹∪∩∈∉⊂⊆∞{}|]/;
+// invisible direction marks (LRM, RLM, embeddings, isolates, ALM, BOM, zero-width space) are removed: the AI and the OCR sometimes add them
+// and they scramble the order of numbers and symbols.
+const BIDI_MARKS = /[\u200B\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+const RATIO = /^[\w٠-٩.,٫سصعمنلك]+(?:\s*[:=]\s*[\w٠-٩.,٫سصعمنلك]+)+$/;
+const TAIL_PUNCT = /[.,٫:;،؛؟!?]+$/;
 export function mathHtml(t: string): string {
+  t = t.replace(BIDI_MARKS, "");
+  return t.split("\n").map(mathLine).join("\n");
+}
+// splits at spaces, but never inside brackets, so "(6 ÷ 2)/(10 ÷ 2)" or "{5, 6, 7}" stays ONE word
+function mathWords(t: string): string[] {
+  const out: string[] = []; let cur = "", d = 0;
+  for (const ch of t) {
+    if ("([{".includes(ch)) d++; else if (")]}".includes(ch) && d > 0) d--;
+    if (/\s/.test(ch) && d === 0) { if (cur) out.push(cur); cur = ""; } else cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+// ---- right-to-left order ----------------------------------------------------------------------------------
+// An Arabic page is read from the right, so math follows it: "108 ÷ 9 = 12" is drawn as "12 = 9 ÷ 108" (the first term sits on the right),
+// "1 : 2" as "2 : 1", "{5, 6, 7}" as "{7 ,6 ,5}". Every number keeps its own digits left-to-right ("1,200" stays "1,200").
+// To go back to the normal left-to-right order of equations, set MATH_RTL to false.
+const MATH_RTL = true;
+const MIRROR: Record<string, string> = { "<": ">", ">": "<", "≤": "≥", "≥": "≤", "⊂": "⊃", "⊃": "⊂", "⊆": "⊇", "⊇": "⊆", "∈": "∋", "∋": "∈", "←": "→", "→": "←", "⇐": "⇒", "⇒": "⇐" };
+// the inside of every bracket pair is turned too (the brackets keep enclosing the text)
+function flipGroups(w: string): string {
+  let out = "";
+  for (let i = 0; i < w.length;) {
+    if ("([{".includes(w[i])) {
+      let d = 0, k = i;
+      for (; k < w.length; k++) { if ("([{".includes(w[k])) d++; else if (")]}".includes(w[k]) && --d === 0) break; }
+      if (k < w.length) { out += w[i] + rtlWords(mathWords(w.slice(i + 1, k))).join(" ") + w[k]; i = k + 1; continue; }
+    }
+    out += w[i++];
+  }
+  return out;
+}
+function rtlWords(words: string[]): string[] {
+  const parts = words.map((w) => {
+    const m = /^(.*[^,،;])([,،;]+)$/.exec(w); // a list comma belongs to the word before it, so it travels to that word's left side
+    return (m ? m[2] : "") + (MIRROR[m ? m[1] : w] ?? flipGroups(m ? m[1] : w));
+  });
+  return parts.reverse();
+}
+function mathLine(line: string): string {
   let out = "", run: string[] = [];
   const flush = () => {
     if (!run.length) return;
-    let tail = "";
-    if (/^\s+$/.test(run[run.length - 1])) tail = run.pop() as string; // a trailing space stays outside the wrapper
-    const txt = run.join("");
-    out += (MATH_OPS.test(txt) || run.length > 2 ? `<bdi dir="ltr">${richMath(txt)}</bdi>` : esc(txt)) + tail;
+    const all = run.join("");
+    const ws = /\s*$/.exec(all)![0]; // spaces after the run stay between the run and the next word
+    let txt = all.slice(0, all.length - ws.length);
     run = [];
+    const m = TAIL_PUNCT.exec(txt);
+    let tail = "";
+    if (m) { tail = m[0]; txt = txt.slice(0, m.index).replace(/\s+$/, ""); }
+    if (txt) {
+      // "2:3" / "6:10=9:15" written without spaces are split so the terms can be ordered
+      const norm = RATIO.test(txt) && txt.includes(":") ? txt.replace(/\s*([:=])\s*/g, " $1 ").trim() : txt;
+      let words = mathWords(norm);
+      if (MATH_RTL && words.length > 1) words = rtlWords(words);
+      else if (MATH_RTL) words = [flipGroups(words[0])];
+      out += MATH_OPS.test(txt) || words.length > 1
+        ? `<span class="mx" dir="ltr">${words.map((w) => `<span class="mw">${richMath(w)}</span>`).join("")}</span>`
+        : richMath(words[0]);
+    }
+    out += esc(tail) + ws;
   };
-  for (const p of t.split(/(\s+)/)) {
+  for (const p of line.split(/(\s+)/)) {
     if (!p) continue;
     if (/^\s+$/.test(p)) { if (run.length) run.push(p); else out += p; continue; }
-    if (MATHY.test(p) || MATH_VAR.test(p)) run.push(p);
+    // sentence punctuation glued to the end of a word ("4،" "5." "x?") is split off and travels with the run (flush puts it outside)
+    const m = /^(.*[^\s.,٫:;،؛؟!?])([.,٫:;،؛؟!?]+)$/.exec(p);
+    const core = m ? m[1] : p;
+    if (MATHY.test(core) || MATH_VAR.test(core)) { run.push(core); if (m) run.push(m[2]); }
     else { flush(); out += esc(p); }
   }
   flush();
@@ -413,7 +476,7 @@ export function examHtml(e: Exam, v: string, key = false): string {
       const label = q.kind === "reason" ? "التعليل" : q.kind === "define" ? "التعريف" : q.kind === "compare" ? "المقارنة" : "الإجابة النموذجية";
       extra = key && q.answer ? `<div class="model${q.kind === "compare" ? " pre" : ""}"><b>${label}:</b> ${q.kind === "compare" ? "\n" : ""}${esc(q.answer)}</div>` : `<div class="ln"></div>`;
     }
-    const why = key && q.explanation && ["mcq", "tf"].includes(q.kind) ? `<p class="why"><b>التفسير:</b> ${esc(q.explanation)}</p>` : "";
+    const why = key && q.explanation && ["mcq", "tf"].includes(q.kind) ? `<p class="why"><b>التفسير:</b> ${isMath ? mathHtml(q.explanation) : esc(q.explanation)}</p>` : "";
     let qText = q.kind === "fill" ? blanks(q.text) : T(q.text), eqLine = "";
     if (q.kind === "balance") {
       const m = q.text.match(/^([\s\S]*?[:：])\s*([^:：]+)$/);
@@ -547,6 +610,7 @@ section{margin:0 0 6px;padding:0 0 5px;border-bottom:1px dotted #bdbdbd}
 .q{margin:0 0 2px;display:flex;gap:9px;font-weight:700;align-items:flex-start}
 .n{min-width:21px;height:21px;background:#111;color:#fff;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex:none;margin-top:2px}
 .qt{padding-top:1px;white-space:pre-line;flex:1 1 auto}
+.mx{display:inline-flex;flex-direction:row;flex-wrap:wrap;gap:0 .28em;align-items:baseline;direction:ltr;unicode-bidi:isolate;white-space:pre}.mx>.mw{display:inline-block}
 .fr{display:inline-block;vertical-align:middle;text-align:center;margin:0 3px;line-height:1.2;white-space:nowrap}.fr>span{display:block;padding:0 4px}.fr>.nu{border-bottom:1.4px solid currentColor;padding-bottom:1px}.fr>.de{padding-top:1px}
 .rt{display:inline-block;white-space:nowrap;vertical-align:baseline}.rt .rs{display:inline-block;font-size:1.15em;line-height:1;margin-right:-1px}.rt .rd{display:inline-block;border-top:1.4px solid currentColor;padding:1px 2px 0 2px;line-height:1.15}.rt .ri{font-size:.6em;vertical-align:top;margin-right:-4px;position:relative;top:-2px}
 sup.pw{font-size:.68em;line-height:0;vertical-align:super}
