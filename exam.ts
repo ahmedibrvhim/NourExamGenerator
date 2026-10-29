@@ -1,6 +1,7 @@
 import { CENTER_NAME, LOGO_DATA_URI } from "@/lib/logo";
 import { WM_ASPECT, WM_DATA_URI } from "@/lib/watermark";
 import { ALL_KINDS, SECTION_TITLE, type Kind } from "@/lib/subjects";
+import { cleanMathText, linesFrom, readMathPage, type Engine, type Gray } from "@/lib/mathocr";
 export type Q = { text: string; choices: string[]; kind: Kind; answer?: string; explanation?: string };
 export type Exam = {
   id: string; title: string; sources: string[]; questions: Q[];
@@ -83,9 +84,32 @@ function enhance(ctx: CanvasRenderingContext2D, w: number, h: number) {
   } catch {}
 }
 
+// ---- math pages: fractions, roots and powers are found in the picture and read separately (lib/mathocr.ts) ----
+function grayOf(canvas: HTMLCanvasElement): Gray {
+  const { width: w, height: h } = canvas, d = canvas.getContext("2d")!.getImageData(0, 0, w, h).data, g = new Uint8Array(w * h);
+  for (let i = 0; i < g.length; i++) g[i] = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000;
+  return { data: g, w, h };
+}
+function canvasOf(g: Gray): HTMLCanvasElement {
+  const c = document.createElement("canvas"); c.width = g.w; c.height = g.h;
+  const ctx = c.getContext("2d")!, img = ctx.createImageData(g.w, g.h);
+  for (let i = 0; i < g.data.length; i++) { const v = g.data[i]; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+const mathEngine = (w: any): Engine => ({
+  async recognize(g, mode, whitelist) {
+    // "page": lines of text in one block (keeps a lone "+" or "=" that auto layout would throw away); "line": one line
+    await w.setParameters({ tessedit_pageseg_mode: mode === "line" ? "7" : "6", tessedit_char_whitelist: whitelist ?? "" });
+    const c = canvasOf(g);
+    try { const { data } = await w.recognize(c, {}, { blocks: true }); return linesFrom(data); }
+    finally { c.width = c.height = 0; }
+  },
+});
+
 export async function ocrPages(
   file: File, nums: number[], signal: AbortSignal,
-  hooks: { onProgress?: (done: number, total: number) => void; onRequest?: () => void; onWait?: (secs: number) => void; onPage?: (n: number, text: string) => void } = {},
+  hooks: { onProgress?: (done: number, total: number) => void; onRequest?: () => void; onWait?: (secs: number) => void; onPage?: (n: number, text: string) => void; math?: boolean } = {},
 ): Promise<Record<number, string>> {
   // @ts-ignore - pdfjs-dist 3.x ships without usable types for this path
   const pdfjs: any = await import("pdfjs-dist/build/pdf");
@@ -130,9 +154,15 @@ export async function ocrPages(
         try {
           const canvas = await render(n);
           hooks.onRequest?.();
-          const { data } = await w.recognize(canvas);
-          canvas.width = canvas.height = 0;
-          out[n] = cleanOcr(data.text || "");
+          if (hooks.math) {
+            const txt = cleanMathText(await readMathPage(mathEngine(w), grayOf(canvas)));
+            canvas.width = canvas.height = 0;
+            out[n] = cleanOcr(txt);
+          } else {
+            const { data } = await w.recognize(canvas);
+            canvas.width = canvas.height = 0;
+            out[n] = cleanOcr(data.text || "");
+          }
           hooks.onPage?.(n, out[n]);
         } catch (e) {
           if (signal.aborted) throw e;
@@ -247,9 +277,9 @@ export function dealSets(pool: Q[], versions: number): Q[][] {
 // ---------- 3) PDF file ----------
 // MATH: an expression such as "٣ + ٥ = ٨" or "٢س + ٣ = ١١" must keep its left-to-right order inside an Arabic line.
 // Consecutive "math-looking" words are wrapped in an LTR <bdi>; everything is HTML-escaped here.
-const MATHY = /^[0-9٠-٩a-zA-Z²³⁴√π°%.,٫+\-−×÷=<>≤≥≠^\/():]+$/;
+const MATHY = /^[0-9٠-٩a-zA-Z⁰¹²³⁴⁵⁶⁷⁸⁹√π°%.,٫+\-−×÷=<>≤≥≠^\/():]+$/;
 const MATH_VAR = /^[٠-٩0-9.,٫]*[سصعمنلك][٠-٩0-9²³]*$/;
-const MATH_OPS = /[+\-−×÷=<>≤≥≠^\/√]/;
+const MATH_OPS = /[+\-−×÷=<>≤≥≠^\/√⁰¹²³⁴⁵⁶⁷⁸⁹]/;
 export function mathHtml(t: string): string {
   let out = "", run: string[] = [];
   const flush = () => {
@@ -257,7 +287,7 @@ export function mathHtml(t: string): string {
     let tail = "";
     if (/^\s+$/.test(run[run.length - 1])) tail = run.pop() as string; // a trailing space stays outside the wrapper
     const txt = run.join("");
-    out += (MATH_OPS.test(txt) || run.length > 2 ? `<bdi dir="ltr">${esc(txt)}</bdi>` : esc(txt)) + tail;
+    out += (MATH_OPS.test(txt) || run.length > 2 ? `<bdi dir="ltr">${richMath(txt)}</bdi>` : esc(txt)) + tail;
     run = [];
   };
   for (const p of t.split(/(\s+)/)) {
@@ -267,6 +297,50 @@ export function mathHtml(t: string): string {
     else { flush(); out += esc(p); }
   }
   flush();
+  return out;
+}
+
+// ---- stacked fractions, roots and powers ------------------------------------------------------------------
+// Notation (what the OCR in lib/mathocr.ts writes and what the question writer is told to use):
+//   3/4   (2x + 1)/(x - 3)   -> stacked fraction      √25   √(x + 4)   ³√27 -> root with an overline (and index)
+//   x²  x^3  x^(n+1)  10⁻²    -> power
+const SUPMAP: Record<string, string> = { "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁻": "−" };
+const ATOM = /^(?:[0-9٠-٩]+(?:[.٫][0-9٠-٩]+)?[a-zA-Zسصعمنلك]?|[a-zA-Zسصعمنلك])/;
+// text of the balanced "( ... )" group that starts at i (returns the inner text and the index after the closing bracket)
+function group(t: string, i: number): [string, number] | null {
+  if (t[i] !== "(") return null;
+  let d = 0;
+  for (let k = i; k < t.length; k++) { if (t[k] === "(") d++; else if (t[k] === ")" && --d === 0) return [t.slice(i + 1, k), k + 1]; }
+  return null;
+}
+function operand(t: string, i: number): [string, number] | null {
+  const g = group(t, i); if (g) return g;
+  const m = ATOM.exec(t.slice(i)); return m ? [m[0], i + m[0].length] : null;
+}
+export function richMath(t: string): string {
+  let out = "";
+  for (let i = 0; i < t.length;) {
+    const c = t[i];
+    // root, with an optional index written as superscript digits right before the sign
+    const ix = /^[⁰¹²³⁴⁵⁶⁷⁸⁹]+√/.exec(t.slice(i));
+    if (c === "√" || ix) {
+      const idx = ix ? [...ix[0].slice(0, -1)].map((ch) => SUPMAP[ch]).join("") : "";
+      const at = i + (ix ? ix[0].length : 1), o = operand(t, at);
+      if (o) { out += `<span class="rt">${idx ? `<sup class="ri">${idx}</sup>` : ""}<span class="rs">√</span><span class="rd">${richMath(o[0])}</span></span>`; i = o[1]; continue; }
+    }
+    // fraction  a/b : the first operand must not be glued to a previous letter or digit
+    if ((c === "(" || ATOM.test(t.slice(i))) && !/[A-Za-z0-9٠-٩.]/.test(t[i - 1] ?? "")) {
+      const a = operand(t, i);
+      if (a && t[a[1]] === "/") {
+        const b = operand(t, a[1] + 1);
+        if (b) { out += `<span class="fr"><span class="nu">${richMath(a[0])}</span><span class="de">${richMath(b[0])}</span></span>`; i = b[1]; continue; }
+      }
+    }
+    // power: superscript digits, or ^n, ^(n+1)
+    if (SUPMAP[c] !== undefined) { let k = i, v = ""; while (k < t.length && SUPMAP[t[k]] !== undefined) v += SUPMAP[t[k++]]; out += `<sup class="pw">${esc(v)}</sup>`; i = k; continue; }
+    if (c === "^") { const o = operand(t, i + 1); if (o) { out += `<sup class="pw">${richMath(o[0])}</sup>`; i = o[1]; continue; } }
+    out += esc(c); i++;
+  }
   return out;
 }
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
@@ -473,6 +547,9 @@ section{margin:0 0 6px;padding:0 0 5px;border-bottom:1px dotted #bdbdbd}
 .q{margin:0 0 2px;display:flex;gap:9px;font-weight:700;align-items:flex-start}
 .n{min-width:21px;height:21px;background:#111;color:#fff;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex:none;margin-top:2px}
 .qt{padding-top:1px;white-space:pre-line;flex:1 1 auto}
+.fr{display:inline-block;vertical-align:middle;text-align:center;margin:0 3px;line-height:1.2;white-space:nowrap}.fr>span{display:block;padding:0 4px}.fr>.nu{border-bottom:1.4px solid currentColor;padding-bottom:1px}.fr>.de{padding-top:1px}
+.rt{display:inline-block;white-space:nowrap;vertical-align:baseline}.rt .rs{display:inline-block;font-size:1.15em;line-height:1;margin-right:-1px}.rt .rd{display:inline-block;border-top:1.4px solid currentColor;padding:1px 2px 0 2px;line-height:1.15}.rt .ri{font-size:.6em;vertical-align:top;margin-right:-4px;position:relative;top:-2px}
+sup.pw{font-size:.68em;line-height:0;vertical-align:super}
 .eqline{margin:2px 30px 3px 0;text-align:center;font-size:15px;font-weight:600;letter-spacing:.3px}
 .c{list-style:none;margin:0;padding:0 30px 0 0;display:flex;flex-wrap:wrap;gap:2px 20px}
 .c li{display:flex;gap:6px;align-items:flex-start;flex:0 1 auto}

@@ -211,6 +211,11 @@ export default function Home() {
   // ---------- scanned books: read the pages the analysis needs (cover pages + the chosen pages) as soon as the file is uploaded ----------
   const filesRef = useRef<SrcFile[]>([]); filesRef.current = files;
   const attempted = useRef<Set<string>>(new Set()); // pages already sent to OCR (a page that stays empty must not be retried forever)
+  // MATH: the text layer of a PDF can never be trusted (a book exported from Word loses fractions, roots and digits: "2,000" becomes "20222").
+  // So for math EVERY page of the chosen range is read by the local OCR once, and the text layer is ignored. Other subjects only OCR pages without text.
+  const isMath = subject?.id === "math";
+  const mathRead = useRef<Set<string>>(new Set()); // "fileId:page" already read by the math OCR
+  const needsOcr = (f: SrcFile, p: number) => (isMath ? !mathRead.current.has(`${f.id}:${p}`) : isBlankPage(f.pages![p - 1]));
   // 1-based page numbers the analysis needs for one file: ONLY the typed page range (+ the cover pages to find the grade)
   const needPages = (f: SrcFile): number[] => {
     if (!f.pages || !needRange) return [];
@@ -221,7 +226,7 @@ export default function Home() {
     for (let p = r.from; p <= r.to; p++) set.add(p);
     return [...set].sort((a, b) => a - b).slice(0, MAX_OCR_PAGES);
   };
-  const pendingScan = (f: SrcFile) => needPages(f).filter((p) => isBlankPage(f.pages![p - 1]) && !attempted.current.has(`${f.id}:${p}`));
+  const pendingScan = (f: SrcFile) => needPages(f).filter((p) => needsOcr(f, p) && !attempted.current.has(`${f.id}:${p}`));
   const needKey = chosen.map((f) => `${f.id}:${needPages(f).join(",")}`).join("|");
   useEffect(() => {
     if (!subject?.ready) return;
@@ -239,8 +244,9 @@ export default function Home() {
           const base = done;
           try {
             await ocrPages(j.f.file, j.nums, ctrl.signal, {
+              math: isMath,
               onProgress: (d) => setScan({ done: base + d, total }),
-              onPage: (n, txt) => setFiles((p) => p.map((x) => (x.id === j.f.id && x.pages ? { ...x, pages: x.pages.map((pg, i) => (i === n - 1 ? txt : pg)) } : x))),
+              onPage: (n, txt) => { if (isMath) mathRead.current.add(`${j.f.id}:${n}`); setFiles((p) => p.map((x) => (x.id === j.f.id && x.pages ? { ...x, pages: x.pages.map((pg, i) => (i === n - 1 ? txt : pg)) } : x))); },
             });
           } catch (e) { if (ctrl.signal.aborted) return; }
           for (const n of j.nums) attempted.current.add(`${j.f.id}:${n}`);
@@ -323,15 +329,15 @@ export default function Home() {
     let todo = chosen.flatMap((f) => {
       const { from: a, to: b } = rangeOf(f);
       const nums: number[] = [];
-      for (let p = a; p <= b; p++) if (isBlankPage(f.pages![p - 1])) nums.push(p);
+      for (let p = a; p <= b; p++) if (needsOcr(f, p)) nums.push(p);
       return nums.length ? [{ f, nums }] : [];
     });
     const blankTotal = todo.reduce((n, t) => n + t.nums.length, 0);
     const nonBlank = chosen.reduce((n, f) => {
       const { from: a, to: b } = rangeOf(f);
-      return n + f.pages!.slice(a - 1, b).filter((t) => !isBlankPage(t)).length;
+      return n + f.pages!.slice(a - 1, b).filter((t, i) => !needsOcr(f, a + i)).length;
     }, 0);
-    if (blankTotal > 0 && blankTotal >= nonBlank) {
+    if (blankTotal > 0 && (isMath || blankTotal >= nonBlank)) {
       // Every scanned page in the range is read (needed so the questions cover the whole range).
       let budget = MAX_OCR_PAGES;
       if (blankTotal > MAX_OCR_PAGES) notify(`عدد الصفحات الممسوحة ${blankTotal} — سيتم قراءة أول ${MAX_OCR_PAGES} صفحة فقط`, "info");
@@ -345,10 +351,11 @@ export default function Home() {
         for (const t of todo) {
           const base = done;
           const res = await ocrPages(t.f.file, t.nums, ctrl.signal, {
+            math: isMath,
             onProgress: (d) => show(`جارٍ قراءة الصفحات الممسوحة: ${base + d} من ${total}…`),
           });
           done += t.nums.length;
-          for (const [n, txt] of Object.entries(res)) pagesOf[t.f.id][Number(n) - 1] = txt;
+          for (const [n, txt] of Object.entries(res)) { pagesOf[t.f.id][Number(n) - 1] = txt; if (isMath) mathRead.current.add(`${t.f.id}:${n}`); }
           setFiles((p) => p.map((x) => (x.id === t.f.id ? { ...x, pages: pagesOf[t.f.id] } : x))); // remember, so a second exam doesn't re-read
         }
       } catch (err) {
@@ -751,7 +758,7 @@ export default function Home() {
                   <input id="topic" className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="اتركه فارغًا لتغطية كل الصفحات" />
                 </div>
                 {chosen.filter((f) => f.pages).map((f) => {
-                  const r = rangeOf(f), scanned = f.pages!.slice(r.from - 1, r.to).filter(isBlankPage).length;
+                  const r = rangeOf(f), scanned = f.pages!.slice(r.from - 1, r.to).filter((_, i) => needsOcr(f, r.from + i)).length;
                   return (
                     <div className="field" key={f.id}>
                       <label>{chosen.length > 1 ? `صفحات «${stripPdf(f.name)}»` : "الصفحات"} (من 1 إلى {r.n}){needRange && <b className="req"> — مطلوب</b>}</label>
