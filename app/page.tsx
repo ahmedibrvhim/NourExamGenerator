@@ -177,7 +177,7 @@ export default function Home() {
   const ready = chosen.length > 0 && chosen.every((f) => f.pages);
   const dayLimited = !!limit && limit.kind === "day" && limit.until > Date.now();
   // Keep the screen on while the app is working (OCR / writing questions / replacements): a locked phone freezes the page.
-  const [scan, setScan] = useState<{ done: number; total: number } | null>(null); // reading scanned pages right after upload (needed for the file analysis)
+  const [scan, setScan] = useState<{ done: number; total: number; cover: number } | null>(null); // reading scanned pages right after upload (needed for the file analysis)
   const working = running || !!scan || files.some((f) => !f.pages) || !!draft?.sets.flat().some((x) => x.state === "loading");
   useEffect(() => {
     if (!working) return;
@@ -238,14 +238,16 @@ export default function Home() {
       if (!jobs.length) return;
       const total = jobs.reduce((n, j) => n + j.nums.length, 0);
       let done = 0;
-      setScan({ done: 0, total });
+      // pages outside the typed range = the cover pages read only to find the grade (shown separately so the count matches the range)
+      const cover = jobs.reduce((n, j) => { const r = rangeOf(j.f, dRanges); return n + j.nums.filter((p) => p < r.from || p > r.to).length; }, 0);
+      setScan({ done: 0, total, cover });
       try {
         for (const j of jobs) {
           const base = done;
           try {
             await ocrPages(j.f.file, j.nums, ctrl.signal, {
               math: isMath,
-              onProgress: (d) => setScan({ done: base + d, total }),
+              onProgress: (d) => setScan({ done: base + d, total, cover }),
               onPage: (n, txt) => { if (isMath) mathRead.current.add(`${j.f.id}:${n}`); setFiles((p) => p.map((x) => (x.id === j.f.id && x.pages ? { ...x, pages: x.pages.map((pg, i) => (i === n - 1 ? txt : pg)) } : x))); },
             });
           } catch (e) { if (ctrl.signal.aborted) return; }
@@ -786,7 +788,7 @@ export default function Home() {
                   {!rangesOk ? (
                     <p className="smart-wait">✍️ اكتب رقم أول صفحة وآخر صفحة (من – إلى) لبدء تحليل الملف.</p>
                   ) : !analysisReady ? (
-                    <p className="smart-wait"><span className="spinner" /> {scan ? `جارٍ قراءة الصفحات الممسوحة ${scan.done} / ${scan.total} — سيظهر التحليل بعد الانتهاء` : "جارٍ تحليل الصفحات…"}</p>
+                    <p className="smart-wait"><span className="spinner" /> {scan ? `جارٍ قراءة الصفحات الممسوحة ${scan.done} / ${scan.total}${scan.cover > 0 ? ` (${scan.total - scan.cover} من صفحاتك + ${scan.cover} من الغلاف لمعرفة الصف)` : ""} — سيظهر التحليل بعد الانتهاء` : "جارٍ تحليل الصفحات…"}</p>
                   ) : detected ? (
                     <div className="smart">
                       <div className="smart-row">

@@ -48,9 +48,9 @@ const COMPARE = /(?:الفرق بين|يختلف|تختلف|اختلاف|مقا�
 const REASON = /(?:لان|لانه|لانها|بسبب|نتيجه ل|ولذلك|لذلك|مما يؤدي|مما يجعل|مما يسبب|يرجع ذلك|يعود ذلك|حيث ان|ينتج عن|يؤدي الي|نظرا ل|تبعا ل|علل)/;
 
 // chemical equations: formulas (with coefficients / subscripts) joined by "+" and an arrow, e.g. "2H₂ + O₂ → 2H₂O"
-const FORM = "\\d*[A-Z][A-Za-z0-9₀-₉()\\[\\]]*(?:\\((?:g|s|l|aq)\\))?";
+const FORM = "\\d*[A-Z][A-Za-z0-9₀-₉()\\[\\]]*[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]*(?:\\((?:g|s|l|aq)\\))?[↑↓]?"; // ions (Na⁺) and gas/precipitate arrows (CO₂↑) allowed
 const SIDE = `${FORM}(?:\\s*\\+\\s*${FORM})*`;
-const EQ = new RegExp(`${SIDE}\\s*(?:→|⟶|->|⇌|⇄|⟹)\\s*${SIDE}`, "g");
+const EQ = new RegExp(`${SIDE}\\s*(?:[-–—─━⎯ـ]*[→⟶⟹⇒⇌⇄⇆⟵←➝➔➜]|[-–—─━⎯ـ]{1,}>)\\s*${SIDE}`, "g");
 
 // numeric problems: a calculation verb with numbers, or several quantities with science units
 const CALC = /(?:احسب|اوجد|ما قيمه|ما مقدار|كم يبلغ|مساله|مسايل|تمرين|مثال)/;
@@ -58,7 +58,7 @@ const NUM = "[0-9٠-٩]+(?:[.,٫][0-9٠-٩]+)?";
 const UNIT = new RegExp(`${NUM}\\s*(?:فولت|امبير|اوم|نيوتن|جول|واط|كيلو\\S*|كجم|جم|مول|لتر|متر|سم|مم|ثانيه|دقيقه|ساعه|هرتز|درجه|°|م/ث|كم/س|v\\b|a\\b|n\\b|j\\b|w\\b|kg|g\\b|cm|mm|m\\b|s\\b|mol|hz|ohm|Ω)`, "gi");
 const HASNUM = /[0-9٠-٩]/;
 // a law written as a formula on its own line: "V = I × R", "شدة التيار = كمية الكهربية ÷ الزمن"
-const isLaw = (l: string) => l.length >= 5 && l.length <= 90 && l.includes("=") && !/[→⟶⇌⇄]|->/.test(l) && (/[×÷*\/]/.test(l) || /^\s*[A-Za-z]{1,3}\s*=/.test(l)) && !/^[\d\s.=+\-]+$/.test(l);
+const isLaw = (l: string) => l.length >= 5 && l.length <= 90 && l.includes("=") && !/[→⟶⇌⇄←⟵]|[-–—─━⎯ـ]>/.test(l) && (/[×÷*\/]/.test(l) || /^\s*[A-Za-z]{1,3}\s*=/.test(l)) && !/^[\d\s.=+\-]+$/.test(l);
 
 // MATH: exercises and examples are short lines such as "احسب: ٣٤ + ٥٦" or "أوجد قيمة س: ٢س + ٣ = ١١", so they are read line by line
 // (the sentence splitter above drops anything shorter than 25 letters).
