@@ -287,8 +287,15 @@ const MATH_OPS = /[+\-−–×÷·=<>≤≥≠≈±^\/√⁰¹²³⁴⁵⁶⁷�
 const BIDI_MARKS = /[\u200B\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 const RATIO = /^[\w٠-٩.,٫سصعمنلك]+(?:\s*[:=]\s*[\w٠-٩.,٫سصعمنلك]+)+$/;
 const TAIL_PUNCT = /[.,٫:;،؛؟!?]+$/;
+// The AI (and the OCR) often write the set signs with letters: "XNY" for X ∩ Y and "AUB" for A ∪ B. Turn them into the real signs.
+const NOT_SETS = new Set(["AND", "END", "BUD", "CUD", "DUE", "ANY", "AXE", "EYE"]);
+function setSigns(t: string): string {
+  // (no look-behind in the pattern: older iPhones cannot even load a file that contains one)
+  return t.replace(/(^|[^A-Za-z])([A-EX-Z](?:[NU][A-EX-Z])+)(?![A-Za-z])/g, (all, pre: string, m: string) =>
+    NOT_SETS.has(m) ? all : pre + [...m].map((c, i) => (i % 2 ? (c === "N" ? " ∩ " : " ∪ ") : c)).join(""));
+}
 export function mathHtml(t: string): string {
-  t = t.replace(BIDI_MARKS, "");
+  t = setSigns(t.replace(BIDI_MARKS, ""));
   return t.split("\n").map(mathLine).join("\n");
 }
 // splits at spaces, but never inside brackets, so "(6 ÷ 2)/(10 ÷ 2)" or "{5, 6, 7}" stays ONE word
@@ -402,6 +409,7 @@ export function richMath(t: string): string {
     // power: superscript digits, or ^n, ^(n+1)
     if (SUPMAP[c] !== undefined) { let k = i, v = ""; while (k < t.length && SUPMAP[t[k]] !== undefined) v += SUPMAP[t[k++]]; out += `<sup class="pw">${esc(v)}</sup>`; i = k; continue; }
     if (c === "^") { const o = operand(t, i + 1); if (o) { out += `<sup class="pw">${richMath(o[0])}</sup>`; i = o[1]; continue; } }
+    if (c === "∩" || c === "∪") { out += `<span class="sx ${c === "∩" ? "ci" : "cu"}"></span>`; i++; continue; }
     out += esc(c); i++;
   }
   return out;
@@ -460,7 +468,9 @@ export function examHtml(e: Exam, v: string, key = false): string {
       const yes = ar ? "صح" : "True", no = ar ? "خطأ" : "False";
       inline = `<span class="tf"><span class="opt${key && q.answer === "true" ? " on" : ""}"><span class="bx">${key && q.answer === "true" ? "✓" : ""}</span>${yes}</span><span class="opt${key && q.answer === "false" ? " on" : ""}"><span class="bx">${key && q.answer === "false" ? "✓" : ""}</span>${no}</span></span>`;
     } else if (q.kind === "solve") {
-      extra = key && q.answer ? `<div class="model pre"><b>الحل:</b>\n${T(q.answer)}</div>` : `<div class="ln"></div><div class="ln"></div><div class="ln"></div>`;
+      extra = key && q.answer
+        ? `<div class="model sol"><div class="sl"><b>الحل:</b></div>${q.answer.split("\n").map((l) => `<div class="sl">${T(l.trim()) || "&nbsp;"}</div>`).join("")}</div>`
+        : `<div class="ln"></div><div class="ln"></div><div class="ln"></div>`;
     } else if (q.kind === "problem") {
       extra = key && q.answer ? `<div class="model pre"><b>الحل:</b>\n${esc(q.answer)}</div>` : `<div class="ln"></div><div class="ln"></div>`;
     } else if (q.kind === "balance" || q.kind === "write") {
@@ -610,6 +620,7 @@ section{margin:0 0 6px;padding:0 0 5px;border-bottom:1px dotted #bdbdbd}
 .q{margin:0 0 2px;display:flex;gap:9px;font-weight:700;align-items:flex-start}
 .n{min-width:21px;height:21px;background:#111;color:#fff;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex:none;margin-top:2px}
 .qt{padding-top:1px;white-space:pre-line;flex:1 1 auto}
+.sx{display:inline-block;box-sizing:border-box;width:.66em;height:.62em;border:1.7px solid currentColor;vertical-align:-.04em;margin:0 .06em}.sx.ci{border-bottom:0;border-radius:.33em .33em 0 0}.sx.cu{border-top:0;border-radius:0 0 .33em .33em}
 .mx{display:inline-flex;flex-direction:row;flex-wrap:wrap;gap:0 .28em;align-items:baseline;direction:ltr;unicode-bidi:isolate;white-space:pre}.mx>.mw{display:inline-block}
 .fr{display:inline-block;vertical-align:middle;text-align:center;margin:0 3px;line-height:1.2;white-space:nowrap}.fr>span{display:block;padding:0 4px}.fr>.nu{border-bottom:1.4px solid currentColor;padding-bottom:1px}.fr>.de{padding-top:1px}
 .rt{display:inline-block;white-space:nowrap;vertical-align:baseline}.rt .rs{display:inline-block;font-size:1.15em;line-height:1;margin-right:-1px}.rt .rd{display:inline-block;border-top:1.4px solid currentColor;padding:1px 2px 0 2px;line-height:1.15}.rt .ri{font-size:.6em;vertical-align:top;margin-right:-4px;position:relative;top:-2px}
@@ -624,7 +635,7 @@ sup.pw{font-size:.68em;line-height:0;vertical-align:super}
 .opt{display:inline-flex;align-items:center;gap:7px;font-weight:600}
 .bx{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.5px solid #111;border-radius:4px;font-size:12px;font-weight:800;line-height:1}
 .opt.on{font-weight:800}.opt.on .bx{background:#111;color:#fff}
-.model.pre{white-space:pre-wrap}.model.eq{font-size:14px}
+.model.sol .sl{white-space:normal;min-height:1.5em}.model.pre{white-space:pre-wrap}.model.eq{font-size:14px}
 .ln{border-bottom:1.2px dashed #777;height:21px;margin:0 30px 0 0}
 .tl{flex:none;align-self:flex-end;width:120px;border-bottom:1.2px dashed #777;height:16px;margin-right:6px}
 .bl{display:inline-block;min-width:70px;border-bottom:1.2px solid #111;height:1em;vertical-align:baseline;margin:0 3px}
@@ -650,6 +661,27 @@ async function waitReady(d: Document) {
   try { await (d as any).fonts?.ready; } catch {}
 }
 
+// html2canvas draws a word as ONE piece of text only when the browser reports ONE rectangle for it. Some browsers (Safari / phones) report several
+// for Arabic words (diacritics, mixed fonts, bidi runs); html2canvas then draws every letter alone and the Arabic joining breaks and overlaps.
+// While the sheets are photographed, every word gets the single rectangle that surrounds all its pieces. Returns a function that undoes it.
+export function mergeRangeRects(win: Window): () => void {
+  const R = (win as any).Range?.prototype;
+  if (!R || R.__merged) return () => {};
+  const orig = R.getClientRects;
+  R.getClientRects = function () {
+    const list = orig.call(this);
+    if (list.length <= 1) return list;
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const x of Array.from(list) as DOMRect[]) {
+      if (!x.width) continue;
+      l = Math.min(l, x.left); t = Math.min(t, x.top); r = Math.max(r, x.right); b = Math.max(b, x.bottom);
+    }
+    return l === Infinity ? list : [new (win as any).DOMRect(l, t, r - l, b - t)];
+  };
+  R.__merged = true;
+  return () => { R.getClientRects = orig; delete R.__merged; };
+}
+
 async function buildPdf(d: Document): Promise<Blob> {
   // html2canvas draws the text on a canvas that belongs to THIS page (not to the hidden exam frame), so this page needs the
   // Cairo font too - otherwise the letters are drawn in a plain font that does not fit the measured spaces.
@@ -665,17 +697,20 @@ async function buildPdf(d: Document): Promise<Blob> {
   const sheets = Array.from(d.querySelectorAll<HTMLElement>(".sheet"));
   if (!sheets.length) throw new Error("no sheets");
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
-  for (let i = 0; i < sheets.length; i++) {
-    const el = sheets[i];
-    const canvas = await html2canvas(el, {
-      scale: IS_MOBILE ? 2 : 3, backgroundColor: "#ffffff", useCORS: true, logging: false,
-      windowWidth: el.offsetWidth, windowHeight: el.offsetHeight,
-    });
-    if (i) pdf.addPage("a4", "portrait");
-    pdf.addImage(canvas.toDataURL("image/jpeg", 0.93), "JPEG", 0, 0, SHEET_W, SHEET_H);
-    canvas.width = canvas.height = 0; // free the memory before the next sheet
-    await new Promise((r) => setTimeout(r, 0));
-  }
+  const restore = d.defaultView ? mergeRangeRects(d.defaultView) : () => {};
+  try {
+    for (let i = 0; i < sheets.length; i++) {
+      const el = sheets[i];
+      const canvas = await html2canvas(el, {
+        scale: IS_MOBILE ? 2 : 3, backgroundColor: "#ffffff", useCORS: true, logging: false,
+        windowWidth: el.offsetWidth, windowHeight: el.offsetHeight,
+      });
+      if (i) pdf.addPage("a4", "portrait");
+      pdf.addImage(canvas.toDataURL("image/jpeg", 0.93), "JPEG", 0, 0, SHEET_W, SHEET_H);
+      canvas.width = canvas.height = 0; // free the memory before the next sheet
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally { restore(); }
   return pdf.output("blob");
 }
 
